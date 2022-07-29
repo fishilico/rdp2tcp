@@ -151,7 +151,7 @@ static int dump_sockets(netsock_t *cli)
 				break;
 
 			case NETSOCK_TUNCLI:
-				if (!ns->state != NETSTATE_CONNECTED) {
+				if (!ns->state != NETSTATE_CONNECTED) { /* BUG in tuncli case: ! more */
 					ret = controller_answer(cli, "tuncli  %s tid=%hu",
 						host1, ns->tid);
 					break;
