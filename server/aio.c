@@ -118,6 +118,7 @@ int aio_read(
 				return syserror("GetOverlappedResult");
 			}
 		}
+	info(0, "IO Read: %i/%i overlap=%u", r, avail, len);
 		
 		if (!len) {
 			ResetEvent(rio->io.hEvent);
@@ -145,43 +146,52 @@ int aio_read(
 	}
 
 	r = 0;
-	if (ReadFile(fd, data, (DWORD)avail, &r, &rio->io)) {
-
-		trace_chan("%i/%i overlap=%u", r, avail, len);
-		if (r == 0) {
-			ResetEvent(rio->io.hEvent);
-			return error("fd closed");
-		}
-
-		if (r == min_io_size) { // increase I/O chunks size (perfs..)
-			min_io_size <<= 1;
-			if (min_io_size > NETBUF_MAX_SIZE) min_io_size = NETBUF_MAX_SIZE;
-			rio->min_io_size = min_io_size;
-		}
-
-		print_xfer(name, 'r', r);
-		iobuf_commit(ibuf, (unsigned int)r);
-		if (callback(ibuf, ctx) < 0) {
-			ResetEvent(rio->io.hEvent);
-			return -1;
-		}
-
-	} else {
+	if (!ReadFile(fd, data, (DWORD)avail, &r, &rio->io)) {
 
 		switch (GetLastError()) {
 
+			case ERROR_MORE_DATA:
+				// Receive data
+				info(0, "read returned ERROR_MORE_DATA, avail=%u, r=%u, increase io_size=%u", avail, r, min_io_size);
+				// TODO: ensure r == 0
+				min_io_size <<= 1;
+				if (min_io_size > NETBUF_MAX_SIZE) min_io_size = NETBUF_MAX_SIZE;
+				rio->min_io_size = min_io_size;
+				rio->pending = 1;
+				return 0;
+
 			case ERROR_IO_PENDING:
 				rio->pending = 1;
-				break;
+				return 0;
 
 			case ERROR_BROKEN_PIPE:
 				info(0, "child process has closed pipe");
-				break;
+				return 0;
 
 			default:
 				ResetEvent(rio->io.hEvent);
 				return syserror("failed to read");
 		}
+	}
+
+	trace_chan("%i/%i overlap=%u", r, avail, len);
+	info(0, "Read: %i/%i overlap=%u", r, avail, len);
+	if (r == 0) {
+		ResetEvent(rio->io.hEvent);
+		return error("fd closed");
+	}
+
+	if (r == min_io_size) { // increase I/O chunks size (perfs..)
+		min_io_size <<= 1;
+		if (min_io_size > NETBUF_MAX_SIZE) min_io_size = NETBUF_MAX_SIZE;
+		rio->min_io_size = min_io_size;
+	}
+
+	print_xfer(name, 'r', r);
+	iobuf_commit(ibuf, (unsigned int)r);
+	if (callback(ibuf, ctx) < 0) {
+		ResetEvent(rio->io.hEvent);
+		return -1;
 	}
 
 	return 0;
